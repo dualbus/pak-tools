@@ -1,0 +1,33 @@
+#!/bin/bash
+
+file-slice() {
+  dd bs=1c if="$1" skip="$2" count="$3" 2>/dev/null
+}
+
+read-int32-le() {
+  local o1 o2 o3 o4
+  read -r o1 o2 o3 o4 < <(file-slice "$1" "$2" 4 | od -v -tu1 -An)
+  printf %u\\n "$((o4 << 24 | o3 << 16 | o2 << 8 | o1))"
+}
+
+
+archive=$1
+
+id=$(     file-slice    "$archive" 0 4)
+offset=$( read-int32-le "$archive" 4  )
+size=$(   read-int32-le "$archive" 8  )
+
+count=$((size / 64))
+for ((i = 0; i < count; i++)); do
+  IFS= read -rd '' file_name < \
+              <(file-slice    "$archive" $((offset + 64 * i     )) 64 )
+  file_offset=$(read-int32-le "$archive" $((offset + 64 * i + 56))    )
+  file_size=$(  read-int32-le "$archive" $((offset + 64 * i + 60))    )
+
+  if [[ $file_name = */* ]]; then
+    file_path=${file_name%/*}
+    mkdir -p "$file_path"
+  fi
+
+  file-slice "$archive" "$file_offset" "$file_size" > "$file_name"
+done
