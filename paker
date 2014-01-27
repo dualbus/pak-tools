@@ -1,0 +1,71 @@
+#!/bin/bash
+
+pad-with() {
+  local i c=$1 n=$2
+
+  for ((i = n; i > 0; i--)); do
+    if [[ $c = '' ]]; then
+      printf \\0
+    else
+      printf %c "$c"
+    fi
+  done
+}
+emit-raw()  { printf %s "$@"; }
+emit-lf()   { printf %s\\n "$@"; }
+emit-nul()  { printf %s\\0 "$@"; }
+emit-int32-le() {
+  local int32=$1 hex=
+
+  ((int32 >> 32)) && {
+    printf %s\\n "number too big: ''$int32''" >&2
+    return 1
+  }
+
+  printf -v hex '\\x%x' \
+    "$((  int32         & 0xff))" "$(( (int32 >>  8)  & 0xff))" \
+    "$(( (int32 >> 16)  & 0xff))" "$(( (int32 >> 24)  & 0xff))"
+
+  printf "$hex"
+}
+
+
+
+# Compute file sizes and store in table
+declare -A file_sizes=()
+count=0 total=0
+for arg do
+  [[ $arg = "${arg::55}" ]] || {
+    printf %s\\n "filename too long: ''$arg''" >&2
+    exit 1
+  }
+
+  size=$(wc -c < "$arg")
+  file_sizes[$arg]=$size
+  ((total += size, count++))
+done
+
+
+
+## Header: 12 bytes
+emit-raw 'PACK'                 # file-id
+emit-int32-le "$((total + 12))" # file-table-offset
+emit-int32-le "$((count * 64))" # file-table-size
+
+
+## Content: $total bytes
+cat "$@"
+
+
+## File entries: 64 bytes * $count
+offset=12
+for arg do
+  file_name=${arg::55} length=${#file_name}
+
+  emit-nul "$file_name"               # file-name
+  pad-with '' "$((55 - length))"      # file-name-padding
+  emit-int32-le "$offset"             # file-offset
+  emit-int32-le "${file_sizes[$arg]}" # file-size
+
+  ((offset += ${file_sizes[$arg]}))
+done
